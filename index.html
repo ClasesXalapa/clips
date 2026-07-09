@@ -887,7 +887,7 @@
     exportStatus.textContent = 'Cargando motor de video (una sola vez)…';
     const { createFFmpeg } = FFmpeg;
     ffmpeg = createFFmpeg({
-      log: false,
+      log: true,
       logger: ({type, message}) => {
         ffmpegLog.push(`[${type}] ${message}`);
         if(ffmpegLog.length > 300) ffmpegLog.shift();
@@ -983,7 +983,7 @@
 
       // crop dinámico (mueve/redimensiona el recuadro) + scale fijo (mantiene resolución
       // de salida constante, requisito del codificador aunque el recuadro cambie de tamaño)
-      const vf = `crop=w='${wExpr}':h='${hExpr}':x='${xExpr}':y='${yExpr}':eval=frame,scale=${outW}:${outH}:eval=frame`;
+      const vf = `crop=w='${wExpr}':h='${hExpr}':x='${xExpr}':y='${yExpr}',scale=${outW}:${outH}:eval=frame`;
 
       ffmpegLog = [];
       await ffmpeg.run(
