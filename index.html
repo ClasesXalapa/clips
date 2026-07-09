@@ -870,7 +870,7 @@
     exportStatus.textContent = 'Cargando motor de video (una sola vez)…';
     const { createFFmpeg } = FFmpeg;
     ffmpeg = createFFmpeg({
-      log: false,
+      log: true,
       corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
     });
     await ffmpeg.load();
@@ -912,13 +912,14 @@
     const wExpr = buildExpr(rel.map(p=>({t:p.t, val:p.w})));
     const hExpr = buildExpr(rel.map(p=>({t:p.t, val:p.h})));
 
-    // aseguramos que crop no se salga del frame: usamos min/max con los límites del video
-    const wSafe = `min(${wExpr},${state.videoW})`;
-    const hSafe = `min(${hExpr},${state.videoH})`;
-    const xSafe = `min(max(${xExpr},0),${state.videoW}-(${wSafe}))`;
-    const ySafe = `min(max(${yExpr},0),${state.videoH}-(${hSafe}))`;
+    // H.264 requiere ancho/alto PAR (múltiplo de 2). Redondeamos hacia abajo al par más cercano.
+    const wEven = `floor(min(${wExpr},${state.videoW})/2)*2`;
+    const hEven = `floor(min(${hExpr},${state.videoH})/2)*2`;
+    // x,y también se redondean a entero para evitar bordes fraccionados
+    const xSafe = `floor(min(max(${xExpr},0),${state.videoW}-(${wEven})))`;
+    const ySafe = `floor(min(max(${yExpr},0),${state.videoH}-(${hEven})))`;
 
-    return { xExpr:xSafe, yExpr:ySafe, wExpr:wSafe, hExpr:hSafe };
+    return { xExpr:xSafe, yExpr:ySafe, wExpr:wEven, hExpr:hEven };
   }
 
   generateBtn.addEventListener('click', async ()=>{
@@ -947,11 +948,16 @@
         '-t', dur,
         '-vf', vf,
         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+        '-pix_fmt', 'yuv420p',
         '-c:a', 'aac', '-b:a', '128k',
+        '-movflags', '+faststart',
         outName
       );
 
       const data = ffmpeg.FS('readFile', outName);
+      if(!data || data.length < 1000){
+        throw new Error('El archivo generado salió vacío o corrupto. Intenta de nuevo o revisa la consola del navegador (F12) para el detalle de ffmpeg.');
+      }
       const blob = new Blob([data.buffer], {type:'video/mp4'});
       const url = URL.createObjectURL(blob);
 
