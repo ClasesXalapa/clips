@@ -1091,24 +1091,42 @@
     cancelBtn.hidden = false;
     generationActive = true;
     exportStatus.style.color = '';
+    let loadTicker = null;
     try{
       await ensureFfmpeg();
+
+      const inputName = 'input_' + (state.videoFile.name.replace(/[^a-z0-9.]/gi,'_'));
+      const { fetchFile } = FFmpeg;
+      const alreadyLoaded = ffmpeg.FS('readdir','/').includes(inputName);
+
+      if(!alreadyLoaded){
+        // Esta etapa carga el ARCHIVO COMPLETO a la memoria del motor (no solo el clip),
+        // así que su duración depende del PESO del video fuente, no de la duración del clip.
+        // Solo pasa una vez por video; los siguientes clips del mismo video son instantáneos aquí.
+        const sizeMB = (state.videoFile.size / (1024*1024)).toFixed(0);
+        const startedAt = Date.now();
+        exportStatus.textContent = `Cargando video al motor (${sizeMB} MB)… 0s`;
+        loadTicker = setInterval(()=>{
+          if(!generationActive){ clearInterval(loadTicker); return; }
+          const secs = Math.round((Date.now()-startedAt)/1000);
+          exportStatus.textContent = `Cargando video al motor (${sizeMB} MB)… ${secs}s`;
+        }, 1000);
+
+        const bytes = await fetchFile(state.videoFile);
+        clearInterval(loadTicker);
+        exportStatus.textContent = `Cargando video al motor (${sizeMB} MB)… escribiendo en memoria…`;
+        ffmpeg.FS('writeFile', inputName, bytes);
+      }
+
       exportStatus.textContent = 'Procesando clip… 0%';
 
-      // Si no hay avance visible tras 20s, avisamos (puede ser un video muy pesado,
-      // o puede estar realmente trabado — en ese caso conviene cancelar y reintentar).
+      // Ahora sí, si el ENCODE (no la carga del archivo) no avanza en 20s, avisamos.
       clearTimeout(stallTimer);
       stallTimer = setTimeout(()=>{
         if(generationActive){
           exportStatus.textContent += '\n\n⚠ Esto está tardando más de lo normal. Si no avanza más, presiona "Cancelar" e intenta de nuevo (a veces ayuda usar un clip más corto o el modo de proporción más simple).';
         }
       }, 20000);
-
-      const inputName = 'input_' + (state.videoFile.name.replace(/[^a-z0-9.]/gi,'_'));
-      const { fetchFile } = FFmpeg;
-      if(!ffmpeg.FS('readdir','/').includes(inputName)){
-        ffmpeg.FS('writeFile', inputName, await fetchFile(state.videoFile));
-      }
 
       const { xExpr, yExpr, wExpr, hExpr, outW, outH } = cropExpressionsForClip(clip);
       const outName = (clip.name || 'clip').replace(/[^a-z0-9.]/gi,'_') + '.mp4';
@@ -1144,11 +1162,13 @@
       exportStatus.textContent = '¡Listo! Clip generado abajo.';
     } catch(err){
       console.error(err);
+      clearInterval(loadTicker);
       const tail = ffmpegLog.slice(-12).join('\n');
       exportStatus.textContent = 'Error al generar el clip: ' + err.message + (tail && !err.message.includes(tail) ? ('\n\n' + tail) : '');
       exportStatus.style.whiteSpace = 'pre-wrap';
     } finally {
       clearTimeout(stallTimer);
+      clearInterval(loadTicker);
       generationActive = false;
       generateBtn.disabled = false;
       cancelBtn.hidden = true;
