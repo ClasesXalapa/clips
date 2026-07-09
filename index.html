@@ -210,6 +210,7 @@
   .clip-editor-panel{border-top:1px solid var(--line);padding:16px 18px 22px;}
   .field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;font-size:12.5px;}
   .field span{color:var(--text-dim);}
+  .field small{color:var(--text-faint);font-size:11px;line-height:1.4;}
   .field input[type=text], .field select{
     background:var(--panel-2);border:1px solid var(--line);color:var(--text);
     padding:8px 10px;border-radius:7px;font-size:13px;
@@ -363,6 +364,34 @@
           </select>
         </label>
 
+        <label class="field">
+          <span>Audio del clip</span>
+          <select id="audioSelect">
+            <option value="on" selected>Con sonido</option>
+            <option value="off">Sin sonido</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Calidad / resolución</span>
+          <select id="qualitySelect">
+            <option value="source" selected>Máxima real — sin agrandar píxeles</option>
+            <option value="social">Alta social — 1080×1920 / 1920×1080 si aplica</option>
+            <option value="balanced">Balanceada — máximo 720p</option>
+          </select>
+          <small>“Máxima real” conserva los píxeles reales del recorte. “Alta social” puede agrandar para llenar formato vertical/horizontal.</small>
+        </label>
+
+        <label class="field">
+          <span>Formato de descarga</span>
+          <select id="formatSelect">
+            <option value="webm" selected>WebM estable — recomendado para navegador</option>
+            <option value="mp4">MP4 si el navegador lo soporta — experimental</option>
+            <option value="auto">Automático</option>
+          </select>
+          <small>Si MP4 se congela o dura más de lo esperado, usa WebM. MP4 estable requiere normalmente procesarlo en servidor.</small>
+        </label>
+
         <div class="field-row">
           <button id="setInBtn" class="btn-secondary">Marcar inicio aquí</button>
           <button id="setOutBtn" class="btn-secondary">Marcar fin aquí</button>
@@ -474,6 +503,9 @@
   const clipNameInput   = document.getElementById('clipName');
   const ratioSelect     = document.getElementById('ratioSelect');
   const transitionSelect = document.getElementById('transitionSelect');
+  const audioSelect      = document.getElementById('audioSelect');
+  const qualitySelect    = document.getElementById('qualitySelect');
+  const formatSelect     = document.getElementById('formatSelect');
   const setInBtn        = document.getElementById('setInBtn');
   const setOutBtn       = document.getElementById('setOutBtn');
   const addKeyframeBtn  = document.getElementById('addKeyframeBtn');
@@ -730,13 +762,14 @@
     const r = ratioValue(ratio);
     let w, h;
     if(r){
-      // ocupar ~55% del alto del video, ajustar ancho a la proporción
-      h = state.videoH * 0.55;
+      // Ocupar la mayor área posible respetando la proporción.
+      // Esto mejora la resolución real del clip exportado, especialmente para 9:16.
+      h = state.videoH * 0.96;
       w = h * r;
-      if(w > state.videoW * 0.9){ w = state.videoW * 0.9; h = w / r; }
+      if(w > state.videoW * 0.96){ w = state.videoW * 0.96; h = w / r; }
     } else {
-      w = state.videoW * 0.5;
-      h = state.videoH * 0.5;
+      w = state.videoW * 0.9;
+      h = state.videoH * 0.9;
     }
     const x = (state.videoW - w) / 2;
     const y = (state.videoH - h) / 2;
@@ -1116,7 +1149,12 @@
 
   /* ============================================================
      EXPORTACIÓN NATIVA — Canvas + MediaRecorder
-     Ideal para clips cortos de 4–8 segundos. No usa FFmpeg WASM.
+     Versión corregida:
+     - Usa un video oculto dedicado para exportar, no el reproductor de la interfaz.
+     - Detiene el recorder por tiempo real y por tiempo del video para evitar clips congelados largos.
+     - Permite elegir audio sí/no.
+     - Prefiere WebM estable; MP4 queda como opción experimental del navegador.
+     - Mantiene la mayor resolución posible según el recorte y la opción de calidad.
   ============================================================ */
   const EXPORT_FPS = 30;
   const MAX_EXPORT_DIM = 1920;
@@ -1126,13 +1164,13 @@
   function getSupportedMimeTypes(){
     if(!window.MediaRecorder || !MediaRecorder.isTypeSupported) return [];
     const candidates = [
-      'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
-      'video/mp4;codecs="h264,aac"',
-      'video/mp4',
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
       'video/webm;codecs=h264,opus',
-      'video/webm'
+      'video/webm',
+      'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+      'video/mp4;codecs="h264,aac"',
+      'video/mp4'
     ];
     return candidates.filter(t => {
       try{ return MediaRecorder.isTypeSupported(t); }
@@ -1140,9 +1178,28 @@
     });
   }
 
-  function pickRecorderMime(){
-    const supported = getSupportedMimeTypes();
-    if(supported.length) return supported[0];
+  function pickRecorderMime(preference){
+    const webm = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=h264,opus',
+      'video/webm'
+    ];
+    const mp4 = [
+      'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+      'video/mp4;codecs="h264,aac"',
+      'video/mp4'
+    ];
+    let candidates;
+    if(preference === 'mp4') candidates = mp4;
+    else if(preference === 'auto') candidates = webm.concat(mp4);
+    else candidates = webm;
+
+    for(const type of candidates){
+      try{
+        if(MediaRecorder.isTypeSupported(type)) return type;
+      }catch(_){ /* ignore */ }
+    }
     return '';
   }
 
@@ -1159,91 +1216,213 @@
     return boxForTime(clip, clip.in);
   }
 
+  function getTargetSizeForRatio(clip, cropW, cropH, qualityMode){
+    const cropRatio = cropW / cropH;
+
+    if(qualityMode === 'balanced'){
+      const maxSide = 1280;
+      const scale = Math.min(1, maxSide / Math.max(cropW, cropH));
+      return {w: evenRound(cropW * scale), h: evenRound(cropH * scale), mode:'balanced-no-upscale'};
+    }
+
+    if(qualityMode === 'social'){
+      if(clip.ratio === '9:16') return {w:1080, h:1920, mode:'social-vertical'};
+      if(clip.ratio === '16:9') return {w:1920, h:1080, mode:'social-horizontal'};
+      const maxSide = 1920;
+      const scale = maxSide / Math.max(cropW, cropH);
+      return {w: evenRound(cropW * scale), h: evenRound(cropH * scale), mode:'social-custom'};
+    }
+
+    // Máxima real: no agranda. Conserva la resolución real del área recortada,
+    // solo reduce si el recorte pasa de 1920px por lado para mantener estabilidad.
+    const scale = Math.min(1, MAX_EXPORT_DIM / Math.max(cropW, cropH));
+    let w = evenRound(cropW * scale);
+    let h = evenRound(cropH * scale);
+
+    // Corrige pequeños desajustes de proporción por redondeo par.
+    if(clip.ratio === '9:16'){
+      h = evenRound(w * 16 / 9);
+      if(h > MAX_EXPORT_DIM){ h = MAX_EXPORT_DIM; w = evenRound(h * 9 / 16); }
+    } else if(clip.ratio === '16:9'){
+      h = evenRound(w * 9 / 16);
+      if(w > MAX_EXPORT_DIM){ w = MAX_EXPORT_DIM; h = evenRound(w * 9 / 16); }
+    } else if(!isFinite(cropRatio) || cropRatio <= 0){
+      w = evenRound(cropW); h = evenRound(cropH);
+    }
+    return {w, h, mode:'source-no-upscale'};
+  }
+
   function getExportSize(clip){
     const startBox = getExportStartBox(clip);
-    let outW = evenRound(startBox.w);
-    let outH = evenRound(startBox.h);
-    const scale = Math.min(1, MAX_EXPORT_DIM / Math.max(outW, outH));
-    outW = evenRound(outW * scale);
-    outH = evenRound(outH * scale);
-    return {outW, outH, scale, startBox};
+    const qualityMode = qualitySelect ? qualitySelect.value : 'source';
+    const cropW = Math.max(2, startBox.w);
+    const cropH = Math.max(2, startBox.h);
+    const target = getTargetSizeForRatio(clip, cropW, cropH, qualityMode);
+    const outW = Math.max(2, evenRound(target.w));
+    const outH = Math.max(2, evenRound(target.h));
+    const upscale = outW > cropW * 1.05 || outH > cropH * 1.05;
+    return {outW, outH, startBox, qualityMode, sizingMode:target.mode, upscale};
   }
 
   function evenRound(v){
     return Math.max(2, Math.round(v / 2) * 2);
   }
 
-  function waitForSeek(targetTime){
+  function waitForVideoMetadata(el){
     return new Promise((resolve, reject)=>{
+      if(el.readyState >= 1 && isFinite(el.duration)) return resolve();
       let done = false;
       const timeout = setTimeout(()=>{
         if(done) return;
         cleanup();
-        reject(new Error('Timeout al posicionar el video en ' + fmtTime(targetTime)));
-      }, 8000);
+        reject(new Error('Timeout cargando metadata del video de exportación.'));
+      }, 10000);
       function cleanup(){
         done = true;
         clearTimeout(timeout);
-        video.removeEventListener('seeked', onSeeked);
-        video.removeEventListener('error', onError);
+        el.removeEventListener('loadedmetadata', onLoaded);
+        el.removeEventListener('error', onError);
+      }
+      function onLoaded(){ cleanup(); resolve(); }
+      function onError(){ cleanup(); reject(new Error('El video de exportación no pudo cargar metadata.')); }
+      el.addEventListener('loadedmetadata', onLoaded, {once:true});
+      el.addEventListener('error', onError, {once:true});
+      try{ el.load(); }catch(_){ /* no-op */ }
+    });
+  }
+
+  function waitForSeekOn(el, targetTime){
+    return new Promise((resolve, reject)=>{
+      let done = false;
+      const safeTarget = clamp(targetTime, 0, Math.max(0, (state.duration || el.duration || targetTime) - 0.05));
+      const timeout = setTimeout(()=>{
+        if(done) return;
+        cleanup();
+        reject(new Error('Timeout al posicionar el video de exportación en ' + fmtTime(safeTarget)));
+      }, 10000);
+      function cleanup(){
+        done = true;
+        clearTimeout(timeout);
+        el.removeEventListener('seeked', onSeeked);
+        el.removeEventListener('error', onError);
       }
       function onSeeked(){ cleanup(); resolve(); }
-      function onError(){ cleanup(); reject(new Error('El video falló al hacer seek.')); }
-      video.addEventListener('seeked', onSeeked, {once:true});
-      video.addEventListener('error', onError, {once:true});
+      function onError(){ cleanup(); reject(new Error('El video de exportación falló al hacer seek.')); }
+      el.addEventListener('seeked', onSeeked, {once:true});
+      el.addEventListener('error', onError, {once:true});
       try{
-        video.currentTime = clamp(targetTime, 0, Math.max(0, state.duration - 0.05));
+        el.currentTime = safeTarget;
       }catch(err){
         cleanup();
         reject(err);
       }
-      if(Math.abs(video.currentTime - targetTime) < 0.05 && video.readyState >= 2){
-        setTimeout(()=>{ if(!done){ cleanup(); resolve(); } }, 60);
+      if(Math.abs(el.currentTime - safeTarget) < 0.05 && el.readyState >= 2){
+        setTimeout(()=>{ if(!done){ cleanup(); resolve(); } }, 80);
       }
     });
   }
 
-  function createMediaStreamFromCanvas(canvas){
+  function createExportVideoElement(){
+    const el = document.createElement('video');
+    el.src = state.videoURL;
+    el.preload = 'auto';
+    el.playsInline = true;
+    el.controls = false;
+    el.loop = false;
+    el.muted = true;
+    el.volume = 0;
+    el.style.position = 'fixed';
+    el.style.left = '-99999px';
+    el.style.top = '0';
+    el.style.width = '1px';
+    el.style.height = '1px';
+    el.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function createMixedStreamFromCanvas(canvas){
     if(!canvas.captureStream) throw new Error('Este navegador no permite capturar Canvas como video.');
     const canvasStream = canvas.captureStream(EXPORT_FPS);
     const mixedStream = new MediaStream();
-    canvasStream.getVideoTracks().forEach(track => mixedStream.addTrack(track));
+    const videoTracks = canvasStream.getVideoTracks();
+    if(!videoTracks.length) throw new Error('Canvas no generó pista de video para MediaRecorder.');
+    videoTracks.forEach(track => mixedStream.addTrack(track));
+    return {mixedStream, canvasStream, canvasTrack: videoTracks[0] || null};
+  }
 
-    // Intentamos conservar audio del video original. Si no se puede, se exporta solo video y queda registrado en logs.
-    const captureFn = video.captureStream || video.mozCaptureStream;
+  async function attachAudioIfRequested(exportVideo, mixedStream){
+    const includeAudio = audioSelect ? audioSelect.value === 'on' : true;
+    if(!includeAudio){
+      writeLog('info', 'Exportación configurada sin sonido por el usuario');
+      return {hasAudio:false, audioCtx:null, audioMethod:'disabled'};
+    }
+
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(AC){
+      try{
+        const audioCtx = new AC();
+        await audioCtx.resume();
+        const source = audioCtx.createMediaElementSource(exportVideo);
+        const dest = audioCtx.createMediaStreamDestination();
+        source.connect(dest);
+        const audioTracks = dest.stream.getAudioTracks();
+        audioTracks.forEach(track => mixedStream.addTrack(track));
+        exportVideo.muted = false;
+        exportVideo.volume = 1;
+        writeLog(audioTracks.length ? 'info' : 'warn', 'Audio conectado vía Web Audio', {
+          audioTracks: audioTracks.length,
+          sampleRate: audioCtx.sampleRate,
+          state: audioCtx.state
+        });
+        return {hasAudio:audioTracks.length > 0, audioCtx, audioMethod:'web-audio'};
+      }catch(err){
+        writeLog('warn', 'No se pudo conectar audio vía Web Audio; se intentará fallback captureStream', errorToLog(err));
+      }
+    } else {
+      writeLog('warn', 'AudioContext no está disponible; se intentará fallback captureStream');
+    }
+
+    const captureFn = exportVideo.captureStream || exportVideo.mozCaptureStream;
     if(captureFn){
       try{
-        const elementStream = captureFn.call(video);
+        exportVideo.muted = false;
+        exportVideo.volume = 0;
+        const elementStream = captureFn.call(exportVideo);
         const audioTracks = elementStream.getAudioTracks();
         audioTracks.forEach(track => mixedStream.addTrack(track));
-        writeLog(audioTracks.length ? 'info' : 'warn', 'Pistas de audio detectadas para exportar', {
+        writeLog(audioTracks.length ? 'info' : 'warn', 'Audio conectado vía captureStream fallback', {
           audioTracks: audioTracks.length,
           labels: audioTracks.map(t => t.label || '(sin etiqueta)')
         });
+        return {hasAudio:audioTracks.length > 0, audioCtx:null, audioMethod:'captureStream'};
       }catch(err){
-        writeLog('warn', 'No se pudo capturar audio del elemento video', errorToLog(err));
+        writeLog('warn', 'No se pudo capturar audio del video oculto', errorToLog(err));
       }
-    } else {
-      writeLog('warn', 'HTMLMediaElement.captureStream no está disponible; el clip saldrá sin audio.');
     }
-    return mixedStream;
+
+    writeLog('warn', 'No fue posible agregar audio. El clip saldrá sin sonido.');
+    return {hasAudio:false, audioCtx:null, audioMethod:'none'};
   }
 
-  function drawFrameToCanvas(ctx, canvas, clip){
-    const box = clip.keyframes.length ? boxForTime(clip, video.currentTime) : getExportStartBox(clip);
+  function drawFrameToCanvas(ctx, canvas, clip, sourceVideo){
+    const mediaTime = sourceVideo ? sourceVideo.currentTime : video.currentTime;
+    const box = clip.keyframes.length ? boxForTime(clip, mediaTime) : getExportStartBox(clip);
     const sx = clamp(box.x, 0, state.videoW - 2);
     const sy = clamp(box.y, 0, state.videoH - 2);
     const sw = clamp(box.w, 2, state.videoW - sx);
     const sh = clamp(box.h, 2, state.videoH - sy);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(sourceVideo || video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
   }
 
   function stopTracks(stream){
     if(!stream) return;
     stream.getTracks().forEach(track => {
-      try{ track.stop(); }catch(_){}
+      try{ track.stop(); }catch(_){ /* ignore */ }
     });
   }
 
@@ -1257,14 +1436,26 @@
     }
     if(!window.MediaRecorder) throw new Error('MediaRecorder no está disponible en este navegador.');
     if(!HTMLCanvasElement.prototype.captureStream) throw new Error('Canvas captureStream no está disponible en este navegador.');
+    if(!MediaRecorder.isTypeSupported(pickRecorderMime(formatSelect ? formatSelect.value : 'webm'))){
+      writeLog('warn', 'El formato preferido podría no estar soportado; el navegador decidirá el contenedor final.');
+    }
+  }
+
+  function calcVideoBitrate(outW, outH, qualityMode){
+    const pixels = outW * outH;
+    let bps;
+    if(qualityMode === 'balanced') bps = pixels * 5.5;
+    else if(qualityMode === 'social') bps = pixels * 9;
+    else bps = pixels * 7.5;
+    return Math.round(clamp(bps, 6000000, 28000000));
   }
 
   cancelBtn.addEventListener('click', ()=>{
     if(!generationActive || !activeExport) return;
     writeLog('warn', 'Cancelación solicitada por el usuario');
     activeExport.cancelled = true;
-    try{ activeExport.recorder && activeExport.recorder.state !== 'inactive' && activeExport.recorder.stop(); }catch(_){}
-    try{ video.pause(); }catch(_){}
+    try{ activeExport.exportVideo && activeExport.exportVideo.pause(); }catch(_){ }
+    try{ activeExport.recorder && activeExport.recorder.state !== 'inactive' && activeExport.recorder.stop(); }catch(_){ }
   });
 
   generateBtn.addEventListener('click', async ()=>{
@@ -1281,27 +1472,44 @@
     exportStatus.style.color = '';
     generationActive = true;
 
+    let exportVideo = null;
     let canvas = null;
     let ctx = null;
     let stream = null;
     let recorder = null;
     let rafId = null;
-    let timeoutId = null;
+    let rvfcId = null;
+    let hardStopTimer = null;
     let chunks = [];
+    let audioCtx = null;
+    let stoppedBy = 'unknown';
 
     try{
       validateClipForExport(clip);
       const clipDur = clip.out - clip.in;
-      const {outW, outH, scale, startBox} = getExportSize(clip);
-      const mimeType = pickRecorderMime();
+      const {outW, outH, startBox, qualityMode, sizingMode, upscale} = getExportSize(clip);
+      const preferredFormat = formatSelect ? formatSelect.value : 'webm';
+      let mimeType = pickRecorderMime(preferredFormat);
+      if(!mimeType){
+        mimeType = pickRecorderMime('auto');
+        writeLog('warn', 'Formato preferido no soportado; usando fallback automático', {preferredFormat, fallback:mimeType || '(navegador decide)'});
+      }
+      if(mimeType && mimeType.includes('mp4')){
+        writeLog('warn', 'MP4 con MediaRecorder es experimental en algunos navegadores. Si ves congelamiento, cambia a WebM estable.', {mimeType});
+      }
       const ext = extFromMime(mimeType);
       const outName = sanitizeFileBase(clip.name) + '.' + ext;
 
-      writeLog('info', 'Iniciando exportación nativa', {
+      writeLog('info', 'Iniciando exportación nativa corregida', {
         clip: {id: clip.id, name: clip.name, in: clip.in, out: clip.out, duration: clipDur, ratio: clip.ratio, transition: clip.transition},
+        userOptions: {
+          audio: audioSelect ? audioSelect.value : 'on',
+          quality: qualityMode,
+          format: preferredFormat
+        },
         keyframes: clip.keyframes.length,
-        sourceVideo: {width: state.videoW, height: state.videoH, duration: state.duration, fileSizeMB: +(state.videoFile.size/(1024*1024)).toFixed(2)},
-        output: {width: outW, height: outH, scale, mimeType: mimeType || '(navegador decide)', filename: outName},
+        sourceVideo: {width: state.videoW, height: state.videoH, duration: state.duration, fileSizeMB: +(state.videoFile.size/(1024*1024)).toFixed(2), type: state.videoFile.type},
+        output: {width: outW, height: outH, sizingMode, upscale, mimeType: mimeType || '(navegador decide)', filename: outName},
         startBox
       });
 
@@ -1312,20 +1520,32 @@
       ctx = canvas.getContext('2d', {alpha:false, desynchronized:true});
       if(!ctx) throw new Error('No se pudo crear el contexto 2D del Canvas.');
 
-      video.pause();
-      video.playbackRate = 1;
-      await waitForSeek(clip.in);
-      drawFrameToCanvas(ctx, canvas, clip);
+      exportVideo = createExportVideoElement();
+      await waitForVideoMetadata(exportVideo);
+      await waitForSeekOn(exportVideo, clip.in);
+      drawFrameToCanvas(ctx, canvas, clip, exportVideo);
 
-      stream = createMediaStreamFromCanvas(canvas);
-      const bitsPerSecond = Math.min(12000000, Math.max(2500000, outW * outH * 5));
-      const options = mimeType ? {mimeType, videoBitsPerSecond: bitsPerSecond, audioBitsPerSecond: 128000} : {videoBitsPerSecond: bitsPerSecond, audioBitsPerSecond: 128000};
+      const streamBundle = createMixedStreamFromCanvas(canvas);
+      stream = streamBundle.mixedStream;
+      const audioResult = await attachAudioIfRequested(exportVideo, stream);
+      audioCtx = audioResult.audioCtx;
+
+      const bitsPerSecond = calcVideoBitrate(outW, outH, qualityMode);
+      const options = mimeType ? {
+        mimeType,
+        videoBitsPerSecond: bitsPerSecond,
+        audioBitsPerSecond: audioResult.hasAudio ? 192000 : 0
+      } : {
+        videoBitsPerSecond: bitsPerSecond,
+        audioBitsPerSecond: audioResult.hasAudio ? 192000 : 0
+      };
+
       recorder = new MediaRecorder(stream, options);
-      activeExport = {recorder, stream, cancelled:false};
+      activeExport = {recorder, stream, cancelled:false, exportVideo};
 
       recorder.addEventListener('dataavailable', (ev)=>{
         if(ev.data && ev.data.size > 0) chunks.push(ev.data);
-        writeLog('info', 'Chunk recibido del recorder', {sizeBytes: ev.data ? ev.data.size : 0, chunks: chunks.length});
+        writeLog('info', 'Chunk recibido del recorder', {sizeBytes: ev.data ? ev.data.size : 0, chunks: chunks.length, recorderState: recorder.state});
       });
       recorder.addEventListener('error', (ev)=>{
         writeLog('error', 'Error interno de MediaRecorder', ev.error ? errorToLog(ev.error) : {message:'Evento error sin detalle'});
@@ -1336,44 +1556,95 @@
         recorder.addEventListener('error', (ev)=> reject(ev.error || new Error('MediaRecorder error')), {once:true});
       });
 
-      let recordingStartedAt = performance.now();
+      let recordingStartedAt = 0;
       let lastProgressPct = -1;
+      let lastMediaTime = exportVideo.currentTime;
+      let repeatedFrames = 0;
 
-      function frameLoop(){
-        if(!generationActive || !activeExport || activeExport.cancelled) return;
-        const nowT = video.currentTime;
-        drawFrameToCanvas(ctx, canvas, clip);
-        const pct = clamp(((nowT - clip.in) / clipDur) * 100, 0, 100);
-        const rounded = Math.floor(pct);
+      function stopRecorder(reason){
+        if(!recorder || recorder.state === 'inactive') return;
+        stoppedBy = reason;
+        try{ recorder.requestData && recorder.requestData(); }catch(_){ }
+        try{ recorder.stop(); }catch(_){ }
+      }
+
+      function updateProgressAndMaybeStop(mediaTime){
+        const elapsed = recordingStartedAt ? (performance.now() - recordingStartedAt) / 1000 : 0;
+        const logicalProgress = clamp(Math.max(mediaTime - clip.in, elapsed) / clipDur, 0, 1);
+        const rounded = Math.floor(logicalProgress * 100);
         if(rounded !== lastProgressPct){
           lastProgressPct = rounded;
           exportStatus.textContent = `Grabando clip en el navegador… ${rounded}%`;
         }
-        if(nowT >= clip.out - 0.035 || video.ended){
-          try{ recorder.state !== 'inactive' && recorder.stop(); }catch(_){}
-          return;
+
+        if(mediaTime <= lastMediaTime + 0.001) repeatedFrames++;
+        else repeatedFrames = 0;
+        lastMediaTime = mediaTime;
+
+        if(mediaTime >= clip.out - 0.025){
+          stopRecorder('clip-out-reached');
+          return true;
         }
-        rafId = requestAnimationFrame(frameLoop);
+        if(elapsed >= clipDur + 0.18){
+          stopRecorder('wall-clock-limit');
+          return true;
+        }
+        return false;
       }
 
-      timeoutId = setTimeout(()=>{
-        if(recorder && recorder.state !== 'inactive'){
-          writeLog('error', 'Timeout real de exportación; se detuvo el recorder', {clipDuration: clipDur});
-          try{ recorder.stop(); }catch(_){}
+      function scheduleDrawLoop(){
+        if(!generationActive || !activeExport || activeExport.cancelled) return;
+        if(exportVideo.requestVideoFrameCallback){
+          rvfcId = exportVideo.requestVideoFrameCallback((_now, metadata)=>{
+            if(!generationActive || !activeExport || activeExport.cancelled) return;
+            const mediaTime = metadata && isFinite(metadata.mediaTime) ? metadata.mediaTime : exportVideo.currentTime;
+            drawFrameToCanvas(ctx, canvas, clip, exportVideo);
+            if(streamBundle.canvasTrack && streamBundle.canvasTrack.requestFrame){
+              try{ streamBundle.canvasTrack.requestFrame(); }catch(_){ }
+            }
+            if(!updateProgressAndMaybeStop(mediaTime)) scheduleDrawLoop();
+          });
+        } else {
+          rafId = requestAnimationFrame(()=>{
+            if(!generationActive || !activeExport || activeExport.cancelled) return;
+            drawFrameToCanvas(ctx, canvas, clip, exportVideo);
+            if(streamBundle.canvasTrack && streamBundle.canvasTrack.requestFrame){
+              try{ streamBundle.canvasTrack.requestFrame(); }catch(_){ }
+            }
+            if(!updateProgressAndMaybeStop(exportVideo.currentTime)) scheduleDrawLoop();
+          });
         }
-      }, Math.max(15000, (clipDur + 10) * 1000));
+      }
 
-      recorder.start(1000);
-      writeLog('info', 'MediaRecorder iniciado', {state: recorder.state, mimeType: recorder.mimeType, bitsPerSecond});
+      hardStopTimer = setTimeout(()=>{
+        if(recorder && recorder.state !== 'inactive'){
+          writeLog('warn', 'Límite duro alcanzado; se detuvo el recorder para evitar video congelado largo', {clipDuration: clipDur, currentTime: exportVideo ? exportVideo.currentTime : null});
+          stopRecorder('hard-timeout');
+        }
+      }, Math.ceil((clipDur + 0.6) * 1000));
+
+      recorder.start(250);
+      recordingStartedAt = performance.now();
+      writeLog('info', 'MediaRecorder iniciado', {
+        state: recorder.state,
+        mimeType: recorder.mimeType,
+        bitsPerSecond,
+        hasAudio: audioResult.hasAudio,
+        audioMethod: audioResult.audioMethod,
+        tracks: stream.getTracks().map(t => ({kind:t.kind, label:t.label || '(sin etiqueta)', readyState:t.readyState, muted:t.muted}))
+      });
       exportStatus.textContent = 'Grabando clip en el navegador… 0%';
 
-      rafId = requestAnimationFrame(frameLoop);
-      await video.play();
+      scheduleDrawLoop();
+      await exportVideo.play();
       await stopped;
 
-      clearTimeout(timeoutId);
-      cancelAnimationFrame(rafId);
-      video.pause();
+      clearTimeout(hardStopTimer);
+      if(rafId) cancelAnimationFrame(rafId);
+      if(rvfcId && exportVideo.cancelVideoFrameCallback){
+        try{ exportVideo.cancelVideoFrameCallback(rvfcId); }catch(_){ }
+      }
+      try{ exportVideo.pause(); }catch(_){ }
 
       if(activeExport && activeExport.cancelled){
         exportStatus.textContent = 'Cancelado. Puedes intentar de nuevo.';
@@ -1386,19 +1657,44 @@
       const blob = new Blob(chunks, {type: blobType});
       if(blob.size < 1000) throw new Error('El archivo generado salió demasiado pequeño o vacío.');
       const url = URL.createObjectURL(blob);
-      addOutputCard(clip.name, outName, url, blobType, blob.size);
+      addOutputCard(clip.name, outName, url, blobType, blob.size, audioResult.hasAudio);
       const elapsed = +((performance.now() - recordingStartedAt) / 1000).toFixed(2);
       exportStatus.textContent = '¡Listo! Clip generado abajo.';
-      writeLog('info', 'Exportación terminada correctamente', {filename: outName, blobType, sizeMB: +(blob.size/(1024*1024)).toFixed(2), elapsedSeconds: elapsed});
+      writeLog('info', 'Exportación terminada correctamente', {
+        filename: outName,
+        blobType,
+        sizeMB: +(blob.size/(1024*1024)).toFixed(2),
+        elapsedSeconds: elapsed,
+        stoppedBy,
+        expectedDuration: clipDur,
+        finalExportVideoTime: exportVideo.currentTime,
+        chunks: chunks.length,
+        hasAudio: audioResult.hasAudio,
+        output: {width: outW, height: outH, qualityMode, sizingMode, upscale}
+      });
+      if(upscale){
+        writeLog('warn', 'La salida fue agrandada desde el recorte original. Para más nitidez, agranda el recuadro de encuadre o usa “Máxima real”.', {cropWidth:startBox.w, cropHeight:startBox.h, outputWidth:outW, outputHeight:outH});
+      }
     } catch(err){
       console.error(err);
       exportStatus.textContent = 'Error al generar el clip. Copia los logs y compártemelos.\n' + (err && err.message ? err.message : String(err));
       exportStatus.style.whiteSpace = 'pre-wrap';
       writeLog('error', 'Fallo al generar clip', errorToLog(err));
     } finally {
-      clearTimeout(timeoutId);
+      clearTimeout(hardStopTimer);
       if(rafId) cancelAnimationFrame(rafId);
+      if(rvfcId && exportVideo && exportVideo.cancelVideoFrameCallback){
+        try{ exportVideo.cancelVideoFrameCallback(rvfcId); }catch(_){ }
+      }
       stopTracks(stream);
+      if(audioCtx){
+        try{ await audioCtx.close(); }catch(_){ }
+      }
+      if(exportVideo){
+        try{ exportVideo.pause(); }catch(_){ }
+        try{ exportVideo.removeAttribute('src'); exportVideo.load(); }catch(_){ }
+        try{ exportVideo.remove(); }catch(_){ }
+      }
       activeExport = null;
       generationActive = false;
       generateBtn.disabled = false;
@@ -1417,15 +1713,17 @@
     }
   });
 
-  function addOutputCard(name, filename, url, mimeType, sizeBytes){
+  function addOutputCard(name, filename, url, mimeType, sizeBytes, hasAudio){
     outputPanel.hidden = false;
     const card = document.createElement('div');
     card.className = 'output-card';
     const sizeMB = sizeBytes ? (sizeBytes/(1024*1024)).toFixed(2) + ' MB' : '';
+    const audioLabel = hasAudio ? ' · con sonido' : ' · sin sonido';
+    const mutedAttr = hasAudio ? '' : ' muted';
     card.innerHTML = `
-      <video src="${url}" controls muted></video>
+      <video src="${url}" controls${mutedAttr}></video>
       <div class="oc-name" title="${escapeHtml(filename)}">${escapeHtml(name)}</div>
-      <div class="ci-time" style="margin-bottom:8px;">${escapeHtml((mimeType || '') + (sizeMB ? ' · ' + sizeMB : ''))}</div>
+      <div class="ci-time" style="margin-bottom:8px;">${escapeHtml((mimeType || '') + audioLabel + (sizeMB ? ' · ' + sizeMB : ''))}</div>
       <a href="${url}" download="${filename}">Descargar</a>
     `;
     outputList.prepend(card);
