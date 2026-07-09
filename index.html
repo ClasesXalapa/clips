@@ -204,7 +204,7 @@
   .kf-item button{background:none;border:none;color:var(--text-faint);font-size:14px;padding:0 4px;}
   .kf-item button:hover{color:#ff9385;}
 
-  .export-status{margin-top:10px;font-size:12px;color:var(--text-dim);font-family:var(--font-mono);min-height:16px;}
+  .export-status{margin-top:10px;font-size:11.5px;color:var(--text-dim);font-family:var(--font-mono);min-height:16px;white-space:pre-wrap;line-height:1.5;max-height:160px;overflow-y:auto;}
 
   /* ---------- Output panel ---------- */
   .output-panel{border-top:1px solid var(--line);padding:18px 24px 26px;background:var(--panel);}
@@ -303,6 +303,14 @@
           </select>
         </label>
 
+        <label class="field">
+          <span>Movimiento entre keyframes</span>
+          <select id="transitionSelect">
+            <option value="smooth">Suave (interpolado)</option>
+            <option value="step">Instantáneo (salto)</option>
+          </select>
+        </label>
+
         <div class="field-row">
           <button id="setInBtn" class="btn-secondary">Marcar inicio aquí</button>
           <button id="setOutBtn" class="btn-secondary">Marcar fin aquí</button>
@@ -351,6 +359,7 @@
 
   let ffmpeg = null;
   let ffmpegReady = false;
+  let ffmpegLog = [];
 
   // Aviso temprano si el aislamiento cross-origin (necesario para SharedArrayBuffer) no está activo.
   // El script coi-serviceworker.js suele resolver esto solo con una recarga automática.
@@ -397,6 +406,7 @@
   const deleteClipBtn   = document.getElementById('deleteClipBtn');
   const clipNameInput   = document.getElementById('clipName');
   const ratioSelect     = document.getElementById('ratioSelect');
+  const transitionSelect = document.getElementById('transitionSelect');
   const setInBtn        = document.getElementById('setInBtn');
   const setOutBtn       = document.getElementById('setOutBtn');
   const addKeyframeBtn  = document.getElementById('addKeyframeBtn');
@@ -733,6 +743,7 @@
       id: uid(),
       name: `Clip ${state.clips.length + 1}`,
       ratio: '9:16',
+      transition: 'smooth',
       in: inT,
       out: outT,
       keyframes: [],
@@ -751,6 +762,7 @@
       clipEditorTitle.textContent = clip.name;
       clipNameInput.value = clip.name;
       ratioSelect.value = clip.ratio;
+      transitionSelect.value = clip.transition || 'smooth';
       liveBox = clip.keyframes.length ? interpolateBox(clip, video.currentTime) : defaultBoxForRatio(clip.ratio);
       video.currentTime = clip.in;
     } else {
@@ -800,6 +812,11 @@
       liveBox = defaultBoxForRatio(clip.ratio);
       drawCropBox(liveBox);
     }
+  });
+
+  transitionSelect.addEventListener('change', ()=>{
+    const clip = getActiveClip(); if(!clip) return;
+    clip.transition = transitionSelect.value;
   });
 
   deleteClipBtn.addEventListener('click', ()=>{
@@ -870,7 +887,11 @@
     exportStatus.textContent = 'Cargando motor de video (una sola vez)…';
     const { createFFmpeg } = FFmpeg;
     ffmpeg = createFFmpeg({
-      log: true,
+      log: false,
+      logger: ({type, message}) => {
+        ffmpegLog.push(`[${type}] ${message}`);
+        if(ffmpegLog.length > 300) ffmpegLog.shift();
+      },
       corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
     });
     await ffmpeg.load();
@@ -879,6 +900,7 @@
 
   // Construye una expresión ffmpeg piecewise-linear para una propiedad (x,y,w,h)
   // a partir de una lista de keyframes {tRel, val} ordenada por tRel.
+  // Interpolación suave (lineal) entre keyframes.
   function buildExpr(points){
     if(points.length === 1) return points[0].val.toFixed(2);
     function build(i){
@@ -892,10 +914,23 @@
       const seg = `${a.val.toFixed(2)}+(${b.val.toFixed(2)}-${a.val.toFixed(2)})*(t-${a.t.toFixed(3)})/${span.toFixed(3)}`;
       return `if(lt(t,${a.t.toFixed(3)}),${a.val.toFixed(2)},if(lt(t,${b.t.toFixed(3)}),${seg},${build(i+1)}))`;
     }
-    // envoltura: antes del primer punto, sostiene el primer valor
     const first = points[0];
     const rest = build(0);
     return `if(lt(t,${first.t.toFixed(3)}),${first.val.toFixed(2)},${rest})`;
+  }
+
+  // Salto instantáneo: sostiene el valor de cada keyframe hasta llegar al siguiente, sin transición.
+  function buildStepExpr(points){
+    if(points.length === 1) return points[0].val.toFixed(2);
+    function build(i){
+      if(i === points.length - 1) return points[i].val.toFixed(2);
+      return `if(lt(t,${points[i+1].t.toFixed(3)}),${points[i].val.toFixed(2)},${build(i+1)})`;
+    }
+    return build(0);
+  }
+
+  function evenRound(v){
+    return Math.max(2, Math.round(v/2)*2);
   }
 
   function cropExpressionsForClip(clip){
@@ -907,19 +942,25 @@
     // tiempo relativo al inicio del clip (t=0 al recortar con -ss antes de -i)
     const rel = kfs.map(k => ({t: clamp(k.t - clip.in, 0, clip.out - clip.in), x:k.x, y:k.y, w:k.w, h:k.h}));
 
-    const xExpr = buildExpr(rel.map(p=>({t:p.t, val:p.x})));
-    const yExpr = buildExpr(rel.map(p=>({t:p.t, val:p.y})));
-    const wExpr = buildExpr(rel.map(p=>({t:p.t, val:p.w})));
-    const hExpr = buildExpr(rel.map(p=>({t:p.t, val:p.h})));
+    const build = clip.transition === 'step' ? buildStepExpr : buildExpr;
+    const xExpr = build(rel.map(p=>({t:p.t, val:p.x})));
+    const yExpr = build(rel.map(p=>({t:p.t, val:p.y})));
+    const wExpr = build(rel.map(p=>({t:p.t, val:p.w})));
+    const hExpr = build(rel.map(p=>({t:p.t, val:p.h})));
 
-    // H.264 requiere ancho/alto PAR (múltiplo de 2). Redondeamos hacia abajo al par más cercano.
+    // H.264 requiere ancho/alto PAR (múltiplo de 2) en el crop dinámico.
     const wEven = `floor(min(${wExpr},${state.videoW})/2)*2`;
     const hEven = `floor(min(${hExpr},${state.videoH})/2)*2`;
-    // x,y también se redondean a entero para evitar bordes fraccionados
     const xSafe = `floor(min(max(${xExpr},0),${state.videoW}-(${wEven})))`;
     const ySafe = `floor(min(max(${yExpr},0),${state.videoH}-(${hEven})))`;
 
-    return { xExpr:xSafe, yExpr:ySafe, wExpr:wEven, hExpr:hEven };
+    // Resolución de SALIDA fija: el crop puede moverse/cambiar de tamaño frame a frame,
+    // pero el video final necesita dimensiones constantes, así que escalamos siempre
+    // al tamaño del primer keyframe (par, redondeado).
+    const outW = evenRound(rel[0].w);
+    const outH = evenRound(rel[0].h);
+
+    return { xExpr:xSafe, yExpr:ySafe, wExpr:wEven, hExpr:hEven, outW, outH };
   }
 
   generateBtn.addEventListener('click', async ()=>{
@@ -936,12 +977,15 @@
         ffmpeg.FS('writeFile', inputName, await fetchFile(state.videoFile));
       }
 
-      const { xExpr, yExpr, wExpr, hExpr } = cropExpressionsForClip(clip);
+      const { xExpr, yExpr, wExpr, hExpr, outW, outH } = cropExpressionsForClip(clip);
       const outName = (clip.name || 'clip').replace(/[^a-z0-9.]/gi,'_') + '.mp4';
       const dur = (clip.out - clip.in).toFixed(3);
 
-      const vf = `crop=w='${wExpr}':h='${hExpr}':x='${xExpr}':y='${yExpr}':eval=frame`;
+      // crop dinámico (mueve/redimensiona el recuadro) + scale fijo (mantiene resolución
+      // de salida constante, requisito del codificador aunque el recuadro cambie de tamaño)
+      const vf = `crop=w='${wExpr}':h='${hExpr}':x='${xExpr}':y='${yExpr}':eval=frame,scale=${outW}:${outH}:eval=frame`;
 
+      ffmpegLog = [];
       await ffmpeg.run(
         '-ss', clip.in.toFixed(3),
         '-i', inputName,
@@ -956,7 +1000,8 @@
 
       const data = ffmpeg.FS('readFile', outName);
       if(!data || data.length < 1000){
-        throw new Error('El archivo generado salió vacío o corrupto. Intenta de nuevo o revisa la consola del navegador (F12) para el detalle de ffmpeg.');
+        const tail = ffmpegLog.slice(-12).join('\n');
+        throw new Error('El archivo generado salió vacío o corrupto.\n' + (tail || '(sin log de ffmpeg)'));
       }
       const blob = new Blob([data.buffer], {type:'video/mp4'});
       const url = URL.createObjectURL(blob);
@@ -965,7 +1010,9 @@
       exportStatus.textContent = '¡Listo! Clip generado abajo.';
     } catch(err){
       console.error(err);
-      exportStatus.textContent = 'Error al generar el clip: ' + err.message;
+      const tail = ffmpegLog.slice(-12).join('\n');
+      exportStatus.textContent = 'Error al generar el clip: ' + err.message + (tail && !err.message.includes(tail) ? ('\n\n' + tail) : '');
+      exportStatus.style.whiteSpace = 'pre-wrap';
     } finally {
       generateBtn.disabled = false;
     }
