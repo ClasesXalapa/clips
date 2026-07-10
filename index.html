@@ -184,8 +184,8 @@
   /* Editor */
   .editor-column{background:linear-gradient(180deg,rgba(255,255,255,.012),transparent 36%)}
   .player-wrap{
-    position:sticky;
-    top:78px;
+    position:relative;
+    top:auto;
     z-index:18;
     width:100%;
     aspect-ratio:16/9;
@@ -1141,20 +1141,6 @@ function updateSegment(index, key, value, input){
   renderAll();
 }
 
-function playerIsComfortablyVisible(){
-  const rect = $('playerWrap').getBoundingClientRect();
-  const header = document.querySelector('header');
-  const topLimit = header && getComputedStyle(header).position === 'sticky' ? header.getBoundingClientRect().bottom + 6 : 6;
-  return rect.top >= topLimit - 4 && rect.bottom <= window.innerHeight - 8;
-}
-
-function bringPlayerIntoView(){
-  if(playerIsComfortablyVisible()) return 40;
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  $('playerWrap').scrollIntoView({behavior:reduced ? 'auto' : 'smooth', block:'start'});
-  return reduced ? 60 : 420;
-}
-
 function previewSegment(index){
   const video = activeVideo();
   if(!video || !playerReady) return;
@@ -1174,21 +1160,13 @@ function previewSegment(index){
     status:'waiting',
     progress:0
   };
+  clearTimeout(clipStartTimer);
+  clipStartTimer = null;
   player.pauseVideo();
   player.seekTo(segment.s, true);
+  clipPreview.status = 'paused';
   updateClipPreviewUI(segment.s);
   renderSegments();
-
-  const delay = bringPlayerIntoView();
-  clearTimeout(clipStartTimer);
-  clipStartTimer = setTimeout(() => {
-    if(!clipPreview || clipPreview.videoId !== video.id || clipPreview.index !== index) return;
-    player.seekTo(clipPreview.start, true);
-    player.playVideo();
-    clipPreview.status = 'playing';
-    updateClipPreviewUI(clipPreview.start);
-    renderSegments();
-  }, delay);
 }
 
 function replayClipPreview(){
@@ -1269,6 +1247,7 @@ function updateClipPreviewUI(now = currentTime()){
   $('clipProgressFill').style.width = `${progress * 100}%`;
   $('clipElapsed').textContent = `${elapsed.toFixed(1)} / ${duration.toFixed(1)} s · se detiene automáticamente`;
   if(finished) $('clipCountdown').textContent = '✓ FIN DEL CLIP';
+  else if(clipPreview.status === 'paused' && elapsed <= .05) $('clipCountdown').textContent = 'Listo en el inicio · pulsa ▶ para reproducir';
   else if(clipPreview.status === 'paused') $('clipCountdown').textContent = `Pausado · faltan ${remaining.toFixed(1)} s`;
   else if(clipPreview.status === 'waiting') $('clipCountdown').textContent = 'Preparando clip…';
   else $('clipCountdown').textContent = `Termina en ${remaining.toFixed(1)} s`;
@@ -1564,8 +1543,8 @@ function renderSegments(){
     preview.type = 'button';
     preview.className = 'icon';
     preview.textContent = isPreview && clipPreview.status === 'playing' ? '❚❚' : isPreview && clipPreview.status === 'finished' ? '↻' : '▶';
-    preview.title = isPreview && clipPreview.status === 'playing' ? 'Pausar clip' : isPreview && clipPreview.status === 'finished' ? 'Repetir clip' : 'Ver clip completo';
-    preview.setAttribute('aria-label', `Reproducir fragmento ${index + 1}`);
+    preview.title = isPreview && clipPreview.status === 'playing' ? 'Pausar clip' : isPreview && clipPreview.status === 'finished' ? 'Repetir clip' : isPreview ? 'Reproducir clip desde el inicio' : 'Preparar clip en el reproductor';
+    preview.setAttribute('aria-label', isPreview ? `Reproducir fragmento ${index + 1}` : `Preparar fragmento ${index + 1} en el reproductor`);
     preview.addEventListener('click', () => previewSegment(index));
 
     const del = document.createElement('button');
