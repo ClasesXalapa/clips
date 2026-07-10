@@ -184,7 +184,9 @@
   /* Editor */
   .editor-column{background:linear-gradient(180deg,rgba(255,255,255,.012),transparent 36%)}
   .player-wrap{
-    position:relative;
+    position:sticky;
+    top:78px;
+    z-index:18;
     width:100%;
     aspect-ratio:16/9;
     overflow:hidden;
@@ -192,8 +194,57 @@
     border-radius:var(--radius);
     background:#050608;
     box-shadow:var(--shadow);
+    transition:border-color .18s ease,box-shadow .18s ease;
+  }
+  .player-wrap.preview-active{
+    border-color:rgba(114,168,255,.82);
+    box-shadow:0 18px 45px rgba(0,0,0,.28),0 0 0 2px rgba(114,168,255,.14);
+  }
+  .player-wrap.preview-ending{
+    border-color:rgba(242,124,107,.92);
+    box-shadow:0 18px 45px rgba(0,0,0,.28),0 0 0 2px rgba(242,124,107,.18);
   }
   #player,.player-wrap iframe{position:absolute;inset:0;width:100%;height:100%}
+
+  .clip-monitor{
+    position:absolute;left:10px;right:10px;bottom:10px;z-index:6;
+    display:grid;gap:7px;padding:9px 10px 10px;
+    border:1px solid rgba(114,168,255,.55);border-radius:10px;
+    background:rgba(12,16,22,.94);box-shadow:0 12px 30px rgba(0,0,0,.38);
+    backdrop-filter:blur(10px);
+  }
+  .clip-monitor[hidden]{display:none}
+  .clip-monitor-top{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+  .clip-monitor-title{display:flex;align-items:center;gap:8px;min-width:0}
+  .clip-badge{
+    flex:0 0 auto;padding:3px 7px;border-radius:999px;
+    background:rgba(114,168,255,.16);color:var(--blue);
+    font:700 9px 'JetBrains Mono',monospace;letter-spacing:.08em;
+  }
+  .clip-range{
+    min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:var(--text);font:700 11px 'JetBrains Mono',monospace;
+  }
+  .clip-countdown{
+    flex:0 0 auto;color:var(--blue);
+    font:700 12px 'JetBrains Mono',monospace;white-space:nowrap;
+  }
+  .clip-progress{position:relative;height:8px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden}
+  .clip-progress-fill{position:absolute;inset:0 auto 0 0;width:0;background:var(--blue);border-radius:inherit;transition:width .05s linear,background .15s ease}
+  .clip-end-marker{position:absolute;right:0;top:-2px;bottom:-2px;width:3px;background:var(--red);box-shadow:0 0 8px rgba(242,124,107,.85)}
+  .clip-monitor-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .clip-elapsed{color:var(--muted);font:500 10px 'JetBrains Mono',monospace}
+  .clip-actions{display:flex;gap:6px}
+  .clip-actions button{min-height:28px;padding:4px 8px;font-size:10px}
+  .clip-monitor.ending{border-color:rgba(242,124,107,.82)}
+  .clip-monitor.ending .clip-badge{background:var(--red-soft);color:var(--red)}
+  .clip-monitor.ending .clip-countdown{color:var(--red);font-size:14px}
+  .clip-monitor.ending .clip-progress-fill{background:var(--red)}
+  .clip-monitor.finished{border-color:rgba(66,211,170,.72);animation:clip-finished-pulse .38s ease 1}
+  .clip-monitor.finished .clip-badge{background:var(--green-soft);color:var(--green)}
+  .clip-monitor.finished .clip-countdown{color:var(--green);font-size:13px}
+  .clip-monitor.finished .clip-progress-fill{background:var(--green)}
+  @keyframes clip-finished-pulse{50%{transform:scale(1.012);box-shadow:0 0 0 3px rgba(66,211,170,.14),0 12px 30px rgba(0,0,0,.38)}}
   .player-placeholder{
     position:absolute;inset:0;z-index:2;
     display:grid;place-items:center;text-align:center;
@@ -294,6 +345,7 @@
   .segments-head span{color:var(--muted);font-size:11px}
   .segment-list{display:flex;flex-direction:column;gap:7px}
   .segment-row{
+    position:relative;overflow:hidden;
     display:grid;
     grid-template-columns:30px minmax(95px,1fr) 16px minmax(95px,1fr) auto 32px 32px;
     gap:7px;
@@ -302,7 +354,17 @@
     border-radius:var(--radius-sm);
     background:var(--surface);
     padding:7px;
+    transition:border-color .15s ease,box-shadow .15s ease,background .15s ease;
   }
+  .segment-row.previewing{border-color:rgba(114,168,255,.78);background:rgba(114,168,255,.075);box-shadow:0 0 0 1px rgba(114,168,255,.08)}
+  .segment-row.previewing .segment-index{color:var(--blue)}
+  .segment-row.preview-ending{border-color:rgba(242,124,107,.82);background:rgba(242,124,107,.075)}
+  .segment-row.preview-ending .segment-index{color:var(--red)}
+  .segment-row.preview-finished{border-color:rgba(66,211,170,.72);background:rgba(66,211,170,.065)}
+  .segment-row.preview-finished .segment-index{color:var(--green)}
+  .segment-row-progress{position:absolute;left:0;bottom:0;height:3px;width:0;background:var(--blue);pointer-events:none;transition:width .05s linear,background .15s ease}
+  .segment-row.preview-ending .segment-row-progress{background:var(--red)}
+  .segment-row.preview-finished .segment-row-progress{background:var(--green)}
   .segment-index{color:var(--muted);font:700 11px 'JetBrains Mono',monospace;text-align:center}
   .segment-row input{
     min-height:34px;padding:6px 8px;text-align:center;
@@ -384,6 +446,9 @@
   }
   @media (max-width:800px){
     header{position:static;padding:12px 14px}
+    .player-wrap{position:relative;top:auto}
+    .clip-monitor{left:7px;right:7px;bottom:7px;padding:8px}
+    .clip-range{font-size:10px}
     .brand p,.session-stat{display:none}
     .app{display:block;min-height:auto}
     .column{border-right:0;border-bottom:1px solid var(--line);padding:14px}
@@ -452,9 +517,29 @@
       <span class="active-video-label" id="activeVideoLabel">Sin video seleccionado</span>
     </div>
 
-    <div class="player-wrap">
+    <div class="player-wrap" id="playerWrap">
       <div class="player-placeholder" id="placeholder">Agrega un video para comenzar.</div>
       <div id="player"></div>
+      <div class="clip-monitor" id="clipMonitor" hidden aria-live="polite">
+        <div class="clip-monitor-top">
+          <div class="clip-monitor-title">
+            <span class="clip-badge" id="clipBadge">CLIP 01</span>
+            <span class="clip-range" id="clipRange">00:00:00 → 00:00:00</span>
+          </div>
+          <span class="clip-countdown" id="clipCountdown">Termina en 0.0 s</span>
+        </div>
+        <div class="clip-progress" aria-hidden="true">
+          <span class="clip-progress-fill" id="clipProgressFill"></span>
+          <span class="clip-end-marker"></span>
+        </div>
+        <div class="clip-monitor-bottom">
+          <span class="clip-elapsed" id="clipElapsed">0.0 / 0.0 s · se detiene automáticamente</span>
+          <div class="clip-actions">
+            <button type="button" id="clipReplayBtn">↻ Repetir</button>
+            <button type="button" class="ghost" id="clipCloseBtn">Salir</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="time-panel">
@@ -569,6 +654,8 @@ let playerReady = false;
 let pollTimer = null;
 let toastTimer = null;
 let saveTimer = null;
+let clipPreview = null; // {videoId,index,start,end,status,progress}
+let clipStartTimer = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -793,6 +880,12 @@ window.onYouTubeIframeAPIReady = function(){
       onStateChange: (event) => {
         updateVideoMetadata();
         $('playBtn').textContent = event.data === YT.PlayerState.PLAYING ? '❚❚' : '▶';
+        if(clipPreview && clipPreview.status !== 'finished'){
+          if(event.data === YT.PlayerState.PLAYING) clipPreview.status = 'playing';
+          else if(event.data === YT.PlayerState.PAUSED) clipPreview.status = 'paused';
+          updateClipPreviewUI();
+          renderSegments();
+        }
         renderTimeline();
       },
       onError: () => {
@@ -825,6 +918,7 @@ function updateVideoMetadata(){
 }
 
 function loadActive(){
+  clearClipPreview(false);
   const video = activeVideo();
   state.pendingIn = null;
   if(!video){
@@ -855,8 +949,9 @@ function startPolling(){
     $('tcTotal').textContent = `TOTAL ${fmtClock(duration)}`;
     positionCursor(now, duration);
     if(state.pendingIn !== null) renderPending();
+    updateClipPreview(now);
     updateVideoMetadata();
-  }, 100);
+  }, 50);
 }
 
 function addVideos(){
@@ -917,6 +1012,7 @@ function clearSession(){
   if(!state.videos.length) return;
   const confirmed = window.confirm('¿Crear una sesión nueva? Se eliminarán todos los videos y fragmentos guardados en este navegador.');
   if(!confirmed) return;
+  clearClipPreview(true);
   remember();
   state.videos = [];
   state.activeIdx = -1;
@@ -928,12 +1024,14 @@ function clearSession(){
 
 function seekBy(amount){
   if(!playerReady || !activeVideo()) return;
+  clearClipPreview(false);
   const duration = Number(player.getDuration()) || activeVideo().duration || Infinity;
   player.seekTo(clamp(currentTime() + Number(amount), 0, duration), true);
 }
 
 function seekToInput(){
   if(!playerReady || !activeVideo()) return;
+  clearClipPreview(false);
   const parsed = parseTime($('gotoInput').value);
   if(!Number.isFinite(parsed)){
     toast('Escribe un tiempo como 1:23, 01:02:03 o segundos.', false);
@@ -947,12 +1045,34 @@ function seekToInput(){
 
 function togglePlay(){
   if(!playerReady || !activeVideo()) return;
+  if(clipPreview){
+    if(clipPreview.status === 'finished'){
+      replayClipPreview();
+      return;
+    }
+    const isPlaying = player.getPlayerState() === YT.PlayerState.PLAYING;
+    if(isPlaying){
+      player.pauseVideo();
+      clipPreview.status = 'paused';
+    }else{
+      const now = currentTime();
+      if(now < clipPreview.start - .15 || now >= clipPreview.end - .03){
+        player.seekTo(clipPreview.start, true);
+      }
+      player.playVideo();
+      clipPreview.status = 'playing';
+    }
+    updateClipPreviewUI();
+    renderSegments();
+    return;
+  }
   const isPlaying = player.getPlayerState() === YT.PlayerState.PLAYING;
   isPlaying ? player.pauseVideo() : player.playVideo();
 }
 
 function markIn(){
   if(!playerReady || !activeVideo()) return;
+  clearClipPreview(false);
   state.pendingIn = currentTime();
   renderPending();
   renderTimeline();
@@ -992,6 +1112,7 @@ function markOut(){
 function updateSegment(index, key, value, input){
   const video = activeVideo();
   if(!video) return;
+  clearClipPreview(true);
   const parsed = parseTime(value);
   const segment = video.segments[index];
   if(!Number.isFinite(parsed)){
@@ -1020,15 +1141,151 @@ function updateSegment(index, key, value, input){
   renderAll();
 }
 
+function playerIsComfortablyVisible(){
+  const rect = $('playerWrap').getBoundingClientRect();
+  const header = document.querySelector('header');
+  const topLimit = header && getComputedStyle(header).position === 'sticky' ? header.getBoundingClientRect().bottom + 6 : 6;
+  return rect.top >= topLimit - 4 && rect.bottom <= window.innerHeight - 8;
+}
+
+function bringPlayerIntoView(){
+  if(playerIsComfortablyVisible()) return 40;
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  $('playerWrap').scrollIntoView({behavior:reduced ? 'auto' : 'smooth', block:'start'});
+  return reduced ? 60 : 420;
+}
+
 function previewSegment(index){
   const video = activeVideo();
   if(!video || !playerReady) return;
   const segment = video.segments[index];
+  const same = clipPreview && clipPreview.videoId === video.id && clipPreview.index === index;
+  if(same){
+    togglePlay();
+    return;
+  }
+
+  clearClipPreview(false);
+  clipPreview = {
+    videoId:video.id,
+    index,
+    start:segment.s,
+    end:segment.e,
+    status:'waiting',
+    progress:0
+  };
+  player.pauseVideo();
   player.seekTo(segment.s, true);
+  updateClipPreviewUI(segment.s);
+  renderSegments();
+
+  const delay = bringPlayerIntoView();
+  clearTimeout(clipStartTimer);
+  clipStartTimer = setTimeout(() => {
+    if(!clipPreview || clipPreview.videoId !== video.id || clipPreview.index !== index) return;
+    player.seekTo(clipPreview.start, true);
+    player.playVideo();
+    clipPreview.status = 'playing';
+    updateClipPreviewUI(clipPreview.start);
+    renderSegments();
+  }, delay);
+}
+
+function replayClipPreview(){
+  if(!clipPreview || !playerReady) return;
+  clearTimeout(clipStartTimer);
+  clipPreview.status = 'playing';
+  clipPreview.progress = 0;
+  player.seekTo(clipPreview.start, true);
   player.playVideo();
+  updateClipPreviewUI(clipPreview.start);
+  renderSegments();
+}
+
+function clearClipPreview(pause = true){
+  clearTimeout(clipStartTimer);
+  clipStartTimer = null;
+  if(pause && playerReady && clipPreview) player.pauseVideo();
+  clipPreview = null;
+  const monitor = $('clipMonitor');
+  if(monitor){
+    monitor.hidden = true;
+    monitor.classList.remove('ending','finished');
+  }
+  $('playerWrap')?.classList.remove('preview-active','preview-ending');
+  document.querySelectorAll('.segment-row.previewing,.segment-row.preview-ending,.segment-row.preview-finished').forEach(row => {
+    row.classList.remove('previewing','preview-ending','preview-finished');
+  });
+}
+
+function finishClipPreview(){
+  if(!clipPreview || clipPreview.status === 'finished') return;
+  clipPreview.status = 'finished';
+  clipPreview.progress = 1;
+  player.pauseVideo();
+  player.seekTo(clipPreview.end, true);
+  updateClipPreviewUI(clipPreview.end);
+  renderSegments();
+}
+
+function updateClipPreview(now = currentTime()){
+  if(!clipPreview) return;
+  const video = activeVideo();
+  if(!video || video.id !== clipPreview.videoId){
+    clearClipPreview(false);
+    return;
+  }
+  if(clipPreview.status === 'waiting') return;
+  if(clipPreview.status === 'playing' && now >= clipPreview.end - .035){
+    finishClipPreview();
+    return;
+  }
+  clipPreview.progress = clamp((now - clipPreview.start) / Math.max(.01, clipPreview.end - clipPreview.start), 0, 1);
+  updateClipPreviewUI(now);
+  updateActiveSegmentProgress();
+}
+
+function updateClipPreviewUI(now = currentTime()){
+  const monitor = $('clipMonitor');
+  if(!clipPreview){
+    monitor.hidden = true;
+    return;
+  }
+  const duration = Math.max(.01, clipPreview.end - clipPreview.start);
+  const elapsed = clamp(now - clipPreview.start, 0, duration);
+  const remaining = Math.max(0, clipPreview.end - now);
+  const progress = clipPreview.status === 'finished' ? 1 : clamp(elapsed / duration, 0, 1);
+  clipPreview.progress = progress;
+  const ending = clipPreview.status === 'playing' && remaining <= 1;
+  const finished = clipPreview.status === 'finished';
+
+  monitor.hidden = false;
+  monitor.classList.toggle('ending', ending);
+  monitor.classList.toggle('finished', finished);
+  $('playerWrap').classList.add('preview-active');
+  $('playerWrap').classList.toggle('preview-ending', ending);
+  $('clipBadge').textContent = `CLIP ${String(clipPreview.index + 1).padStart(2,'0')}`;
+  $('clipRange').textContent = `${fmtClock(clipPreview.start, true)} → ${fmtClock(clipPreview.end, true)}`;
+  $('clipProgressFill').style.width = `${progress * 100}%`;
+  $('clipElapsed').textContent = `${elapsed.toFixed(1)} / ${duration.toFixed(1)} s · se detiene automáticamente`;
+  if(finished) $('clipCountdown').textContent = '✓ FIN DEL CLIP';
+  else if(clipPreview.status === 'paused') $('clipCountdown').textContent = `Pausado · faltan ${remaining.toFixed(1)} s`;
+  else if(clipPreview.status === 'waiting') $('clipCountdown').textContent = 'Preparando clip…';
+  else $('clipCountdown').textContent = `Termina en ${remaining.toFixed(1)} s`;
+}
+
+function updateActiveSegmentProgress(){
+  if(!clipPreview) return;
+  const row = document.querySelector(`.segment-row[data-preview-index="${clipPreview.index}"]`);
+  if(!row) return;
+  const bar = row.querySelector('.segment-row-progress');
+  if(bar) bar.style.width = `${clipPreview.progress * 100}%`;
+  const remaining = clipPreview.end - currentTime();
+  row.classList.toggle('preview-ending', clipPreview.status === 'playing' && remaining <= 1);
 }
 
 function removeSegment(index){
+  clearClipPreview(true);
   const video = activeVideo();
   if(!video) return;
   remember();
@@ -1261,7 +1518,13 @@ function renderSegments(){
 
   video.segments.forEach((segment, index) => {
     const row = document.createElement('div');
-    row.className = 'segment-row';
+    const isPreview = Boolean(clipPreview && clipPreview.videoId === video.id && clipPreview.index === index);
+    row.className = `segment-row${isPreview ? clipPreview.status === 'finished' ? ' preview-finished' : ' previewing' : ''}`;
+    row.dataset.previewIndex = String(index);
+
+    const progress = document.createElement('span');
+    progress.className = 'segment-row-progress';
+    progress.style.width = isPreview ? `${(clipPreview.progress || 0) * 100}%` : '0%';
 
     const number = document.createElement('span');
     number.className = 'segment-index';
@@ -1300,8 +1563,8 @@ function renderSegments(){
     const preview = document.createElement('button');
     preview.type = 'button';
     preview.className = 'icon';
-    preview.textContent = '▶';
-    preview.title = 'Reproducir desde el inicio';
+    preview.textContent = isPreview && clipPreview.status === 'playing' ? '❚❚' : isPreview && clipPreview.status === 'finished' ? '↻' : '▶';
+    preview.title = isPreview && clipPreview.status === 'playing' ? 'Pausar clip' : isPreview && clipPreview.status === 'finished' ? 'Repetir clip' : 'Ver clip completo';
     preview.setAttribute('aria-label', `Reproducir fragmento ${index + 1}`);
     preview.addEventListener('click', () => previewSegment(index));
 
@@ -1313,7 +1576,7 @@ function renderSegments(){
     del.setAttribute('aria-label', `Eliminar fragmento ${index + 1}`);
     del.addEventListener('click', () => removeSegment(index));
 
-    row.append(number, start, separator, end, duration, preview, del);
+    row.append(progress, number, start, separator, end, duration, preview, del);
     box.appendChild(row);
   });
 }
@@ -1376,6 +1639,8 @@ $('copyAll').addEventListener('click', copyAll);
 $('downloadTxt').addEventListener('click', downloadTxt);
 $('undoBtn').addEventListener('click', undo);
 $('clearBtn').addEventListener('click', clearSession);
+$('clipReplayBtn').addEventListener('click', replayClipPreview);
+$('clipCloseBtn').addEventListener('click', () => clearClipPreview(true));
 
 document.querySelectorAll('[data-seek]').forEach(button => {
   button.addEventListener('click', () => seekBy(Number(button.dataset.seek)));
@@ -1384,6 +1649,7 @@ document.querySelectorAll('[data-seek]').forEach(button => {
 $('timeline').addEventListener('click', event => {
   const video = activeVideo();
   if(!video || !video.duration || !playerReady) return;
+  clearClipPreview(false);
   const rect = event.currentTarget.getBoundingClientRect();
   const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
   player.seekTo(ratio * video.duration, true);
@@ -1407,6 +1673,7 @@ document.addEventListener('keydown', event => {
     markOut();
   }else if(event.key === 'Escape'){
     if($('shortcutsDialog').open) $('shortcutsDialog').close();
+    else if(clipPreview) clearClipPreview(true);
     else cancelPending();
   }else if(event.key === 'ArrowLeft' || event.key === 'ArrowRight'){
     event.preventDefault();
