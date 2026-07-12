@@ -313,6 +313,23 @@
   .pending .duration{color:var(--text)}
   .pending button{min-height:28px;padding:3px 8px;font-size:10px}
 
+  .download-mode{
+    display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;
+    margin:11px 0 13px;padding:8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);
+  }
+  .download-mode button{min-height:42px;background:transparent;color:var(--muted)}
+  .download-mode button.active{
+    color:#081b15;border-color:var(--green);background:var(--green);
+    box-shadow:0 8px 18px rgba(66,211,170,.12);
+  }
+  .download-mode button[data-mode="clips"].active{color:#201706;border-color:var(--accent);background:var(--accent)}
+  .mode-help{grid-column:1/-1;color:var(--muted);font-size:10px;line-height:1.45;padding:0 3px 2px}
+  .full-mode-note{
+    border:1px solid rgba(66,211,170,.35);border-radius:var(--radius-sm);
+    background:var(--green-soft);color:#b9f3df;padding:10px 11px;font-size:11px;line-height:1.5;
+  }
+  .video-sub .full-video{color:var(--green)}
+
   .timeline-wrap{margin-bottom:13px}
   .timeline{
     position:relative;
@@ -403,7 +420,15 @@
   }
   .output-warning.has-warning{color:var(--accent)}
   .output-actions{display:grid;grid-template-columns:1fr;gap:8px}
-  .output-actions .download{min-height:48px;font-size:14px}
+  .output-actions .download,.output-actions .local-app{min-height:48px;font-size:14px}
+  .output-actions .local-app{
+    background:linear-gradient(180deg,#85b5ff,var(--blue));
+    border-color:var(--blue);color:#071425;
+    box-shadow:0 10px 24px rgba(114,168,255,.16);
+  }
+  .output-actions .local-app:hover:not(:disabled){background:#91bdff;border-color:#91bdff}
+  .local-app-hint{font-size:10px;line-height:1.45;color:var(--muted);text-align:center;margin-top:-2px}
+  .local-app-hint code{font:600 10px 'JetBrains Mono',monospace;color:#b9d3ff}
   .secondary-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .autosave{
     display:flex;align-items:center;justify-content:center;gap:6px;
@@ -486,7 +511,7 @@
     <div class="brand-mark" aria-hidden="true">▸</div>
     <div class="brand-copy">
       <h1>MESA DE RECORTES</h1>
-      <p>Selecciona fragmentos y descarga <span class="mono">lista.txt</span></p>
+      <p>Selecciona fragmentos o videos completos y genera <span class="mono">lista.txt</span></p>
     </div>
   </div>
   <div class="header-actions">
@@ -574,6 +599,12 @@
       <div class="pending" id="pending" aria-live="polite"></div>
     </div>
 
+    <div class="download-mode" aria-label="Tipo de descarga para el video seleccionado">
+      <button id="modeClips" data-mode="clips" type="button">Descargar fragmentos</button>
+      <button id="modeFull" data-mode="full" type="button">Descargar video completo</button>
+      <div class="mode-help" id="modeHelp">Selecciona fragmentos o marca este video para descargarlo completo.</div>
+    </div>
+
     <div class="timeline-wrap">
       <div class="timeline" id="timeline" title="Haz clic para ir a ese punto" aria-label="Línea de tiempo"></div>
       <div class="timeline-labels"><span>00:00</span><span id="timelineHalf">00:00</span><span id="timelineEnd">00:00</span></div>
@@ -602,10 +633,12 @@
         <div class="output-warning" id="outputWarning"></div>
       </div>
 
-      <div class="output-box" id="outBox"><span class="output-placeholder">Las líneas aparecerán cuando agregues al menos un fragmento.</span></div>
+      <div class="output-box" id="outBox"><span class="output-placeholder">Las líneas aparecerán cuando agregues fragmentos o marques un video completo.</span></div>
 
       <div class="output-side">
         <div class="output-actions">
+          <button class="local-app" id="sendToLocal" type="button">Enviar al descargador local</button>
+          <div class="local-app-hint">Requiere la app abierta en <code>127.0.0.1:8765</code></div>
           <button class="primary download" id="downloadTxt" type="button">Descargar lista.txt</button>
           <div class="secondary-actions">
             <button id="copyAll" type="button">Copiar</button>
@@ -735,15 +768,19 @@ function currentTime(){
 }
 
 function totalSelectedDuration(){
-  return state.videos.reduce((total, video) => total + video.segments.reduce((sum, segment) => sum + Math.max(0, segment.e - segment.s), 0), 0);
+  return state.videos.reduce((total, video) => total + (video.fullVideo ? 0 : video.segments.reduce((sum, segment) => sum + Math.max(0, segment.e - segment.s), 0)), 0);
 }
 
 function totalSegments(){
-  return state.videos.reduce((sum, video) => sum + video.segments.length, 0);
+  return state.videos.reduce((sum, video) => sum + (video.fullVideo ? 0 : video.segments.length), 0);
+}
+
+function totalFullVideos(){
+  return state.videos.filter(video => video.fullVideo).length;
 }
 
 function exportableVideos(){
-  return state.videos.filter(video => video.segments.length > 0);
+  return state.videos.filter(video => video.fullVideo || video.segments.length > 0);
 }
 
 function snapshot(){
@@ -796,6 +833,7 @@ function normalizeState(){
       url: `https://www.youtube.com/watch?v=${video.id.slice(0, 11)}`,
       title: typeof video.title === 'string' ? video.title : '',
       duration: Math.max(0, Number(video.duration) || 0),
+      fullVideo: Boolean(video.fullVideo),
       segments: Array.isArray(video.segments)
         ? video.segments
           .map(segment => ({s: Math.max(0, Number(segment.s) || 0), e: Math.max(0, Number(segment.e) || 0)}))
@@ -845,13 +883,18 @@ function toast(message, ok = true){
 }
 
 function setButtonsEnabled(){
-  const hasVideo = Boolean(activeVideo()) && playerReady;
-  document.querySelectorAll('[data-seek],#playBtn,#gotoBtn,#markIn,#markOut').forEach(button => {
+  const video = activeVideo();
+  const hasVideo = Boolean(video) && playerReady;
+  document.querySelectorAll('[data-seek],#playBtn,#gotoBtn').forEach(button => {
     button.disabled = !hasVideo;
   });
-  $('markOut').disabled = !hasVideo || state.pendingIn === null;
+  $('markIn').disabled = !hasVideo || Boolean(video?.fullVideo);
+  $('markOut').disabled = !hasVideo || Boolean(video?.fullVideo) || state.pendingIn === null;
+  $('modeClips').disabled = !video;
+  $('modeFull').disabled = !video;
   const hasOutput = exportableVideos().length > 0;
   $('downloadTxt').disabled = !hasOutput;
+  $('sendToLocal').disabled = !hasOutput;
   $('copyAll').disabled = !hasOutput;
 }
 
@@ -965,7 +1008,7 @@ function addVideos(){
     const id = parseYouTubeId(candidate);
     if(!id) invalid.push(candidate);
     else if(!state.videos.some(video => video.id === id) && !valid.some(item => item.id === id)){
-      valid.push({id, url:`https://www.youtube.com/watch?v=${id}`, title:'', duration:0, segments:[]});
+      valid.push({id, url:`https://www.youtube.com/watch?v=${id}`, title:'', duration:0, fullVideo:false, segments:[]});
     }
   }
 
@@ -1070,8 +1113,24 @@ function togglePlay(){
   isPlaying ? player.pauseVideo() : player.playVideo();
 }
 
+function setVideoMode(mode){
+  const video = activeVideo();
+  if(!video) return;
+  const fullVideo = mode === 'full';
+  if(video.fullVideo === fullVideo) return;
+  remember();
+  clearClipPreview(true);
+  state.pendingIn = null;
+  video.fullVideo = fullVideo;
+  scheduleSave();
+  renderAll();
+  toast(fullVideo ? 'Este video se descargará completo.' : 'Este video usará sus fragmentos.');
+}
+
 function markIn(){
-  if(!playerReady || !activeVideo()) return;
+  const video = activeVideo();
+  if(!playerReady || !video) return;
+  if(video.fullVideo){ toast('Cambia a “Descargar fragmentos” para crear marcas.', false); return; }
   clearClipPreview(false);
   state.pendingIn = currentTime();
   renderPending();
@@ -1089,6 +1148,7 @@ function cancelPending(){
 function markOut(){
   const video = activeVideo();
   if(!video || !playerReady) return;
+  if(video.fullVideo){ toast('Cambia a “Descargar fragmentos” para crear marcas.', false); return; }
   if(state.pendingIn === null){
     toast('Primero marca el inicio.', false);
     return;
@@ -1276,19 +1336,61 @@ function removeSegment(index){
 
 function buildLines(){
   return exportableVideos().map(video => {
+    const url = `https://www.youtube.com/watch?v=${video.id}`;
+    if(video.fullVideo) return url;
     const ranges = video.segments
       .slice()
       .sort((a,b) => a.s - b.s)
       .map(segment => `${outputTime(segment.s)}-${outputTime(segment.e, true)}`)
       .join(',');
-    return `https://www.youtube.com/watch?v=${video.id} ${ranges}`;
+    return `${url} ${ranges}`;
   });
+}
+
+const LOCAL_DOWNLOADER_URL = 'http://127.0.0.1:8765/';
+
+function encodeBase64UrlUtf8(value){
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for(let i = 0; i < bytes.length; i += chunkSize){
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function sendToLocalDownloader(){
+  const lines = buildLines();
+  if(!lines.length){
+    toast('Agrega fragmentos o marca un video completo.', false);
+    return;
+  }
+
+  const payload = JSON.stringify({
+    v: 1,
+    s: 'mesa-recortes',
+    t: lines.join('\n')
+  });
+  const target = `${LOCAL_DOWNLOADER_URL}#import=${encodeBase64UrlUtf8(payload)}`;
+
+  if(target.length > 1500000){
+    toast('La cola es demasiado grande para enviarla por URL. Descarga lista.txt.', false);
+    return;
+  }
+
+  const opened = window.open(target, '_blank');
+  if(opened){
+    try{ opened.opener = null; }catch{}
+    toast('Cola enviada. La app local se abrirá en otra pestaña.');
+  }else{
+    toast('El navegador bloqueó la pestaña. Permite ventanas emergentes e inténtalo otra vez.', false);
+  }
 }
 
 async function copyAll(){
   const text = buildLines().join('\n');
   if(!text){
-    toast('Agrega al menos un fragmento.', false);
+    toast('Agrega fragmentos o marca un video completo.', false);
     return;
   }
   try{
@@ -1310,7 +1412,7 @@ async function copyAll(){
 function downloadTxt(){
   const text = buildLines().join('\r\n');
   if(!text){
-    toast('Agrega al menos un fragmento.', false);
+    toast('Agrega fragmentos o marca un video completo.', false);
     return;
   }
   const blob = new Blob([`${text}\r\n`], {type:'text/plain;charset=utf-8'});
@@ -1328,6 +1430,7 @@ function downloadTxt(){
 function renderAll(){
   renderQueue();
   renderEditorHeader();
+  renderDownloadMode();
   renderPending();
   renderTimeline();
   renderSegments();
@@ -1382,8 +1485,8 @@ function renderQueue(){
     id.className = 'mono';
     id.textContent = video.id;
     const count = document.createElement('span');
-    count.className = video.segments.length ? 'ready' : 'empty-segments';
-    count.textContent = video.segments.length ? `${video.segments.length} frag.` : 'sin fragmentos';
+    count.className = video.fullVideo ? 'full-video' : video.segments.length ? 'ready' : 'empty-segments';
+    count.textContent = video.fullVideo ? 'video completo' : video.segments.length ? `${video.segments.length} frag.` : 'sin seleccionar';
     sub.append(id, count);
     copy.append(title, sub);
 
@@ -1405,9 +1508,30 @@ function renderEditorHeader(){
   $('activeVideoLabel').textContent = video ? (video.title || video.id) : 'Sin video seleccionado';
 }
 
+function renderDownloadMode(){
+  const video = activeVideo();
+  const isFull = Boolean(video?.fullVideo);
+  $('modeClips').classList.toggle('active', Boolean(video) && !isFull);
+  $('modeFull').classList.toggle('active', Boolean(video) && isFull);
+  $('modeClips').setAttribute('aria-pressed', String(Boolean(video) && !isFull));
+  $('modeFull').setAttribute('aria-pressed', String(Boolean(video) && isFull));
+  $('modeHelp').textContent = !video
+    ? 'Selecciona un video para elegir cómo se descargará.'
+    : isFull
+      ? 'La línea de lista.txt contendrá solo la URL y la app descargará el video completo.'
+      : video.segments.length
+        ? 'La línea incluirá únicamente los fragmentos marcados.'
+        : 'Agrega al menos un fragmento para incluir este video en la salida.';
+}
+
 function renderPending(){
   const box = $('pending');
   box.replaceChildren();
+  const video = activeVideo();
+  if(video?.fullVideo){
+    box.textContent = 'Modo video completo: las marcas guardadas se conservan, pero no se exportan.';
+    return;
+  }
   if(state.pendingIn === null){
     box.textContent = 'Marca un inicio y después el final.';
     return;
@@ -1478,7 +1602,9 @@ function renderSegments(){
   const video = activeVideo();
   const count = video?.segments.length || 0;
   const selected = video ? video.segments.reduce((sum, segment) => sum + (segment.e - segment.s), 0) : 0;
-  $('segmentMeta').textContent = `${count} ${count === 1 ? 'fragmento' : 'fragmentos'} · ${fmtCompact(selected)}`;
+  $('segmentMeta').textContent = video?.fullVideo
+    ? `video completo · ${count} ${count === 1 ? 'fragmento guardado' : 'fragmentos guardados'}`
+    : `${count} ${count === 1 ? 'fragmento' : 'fragmentos'} · ${fmtCompact(selected)}`;
 
   if(!video){
     const empty = document.createElement('div');
@@ -1487,11 +1613,21 @@ function renderSegments(){
     box.appendChild(empty);
     return;
   }
+  if(video.fullVideo){
+    const note = document.createElement('div');
+    note.className = 'full-mode-note';
+    note.textContent = video.segments.length
+      ? 'Se descargará el video completo. Los fragmentos de abajo quedan guardados por si vuelves al modo de fragmentos.'
+      : 'Se descargará el video completo. No necesitas agregar marcas de tiempo.';
+    box.appendChild(note);
+  }
   if(!video.segments.length){
-    const empty = document.createElement('div');
-    empty.className = 'segment-empty';
-    empty.textContent = 'Aún no hay fragmentos en este video.';
-    box.appendChild(empty);
+    if(!video.fullVideo){
+      const empty = document.createElement('div');
+      empty.className = 'segment-empty';
+      empty.textContent = 'Aún no hay fragmentos en este video.';
+      box.appendChild(empty);
+    }
     return;
   }
 
@@ -1567,18 +1703,19 @@ function renderOutput(){
   if(!lines.length){
     const placeholder = document.createElement('span');
     placeholder.className = 'output-placeholder';
-    placeholder.textContent = 'Las líneas aparecerán cuando agregues al menos un fragmento.';
+    placeholder.textContent = 'Las líneas aparecerán cuando agregues fragmentos o marques un video completo.';
     box.appendChild(placeholder);
   }else{
     box.textContent = lines.join('\n');
   }
 
-  const omitted = state.videos.length - exportableVideos().length;
+  const omitted = state.videos.filter(video => !video.fullVideo && !video.segments.length).length;
+  const full = totalFullVideos();
   const warning = $('outputWarning');
   warning.className = `output-warning${omitted ? ' has-warning' : ''}`;
   warning.textContent = omitted
-    ? `${omitted} ${omitted === 1 ? 'video sin fragmentos no se incluirá' : 'videos sin fragmentos no se incluirán'} en el archivo.`
-    : lines.length ? 'Todo listo para descargar.' : '';
+    ? `${omitted} ${omitted === 1 ? 'video todavía no tiene fragmentos ni está marcado como completo' : 'videos todavía no tienen fragmentos ni están marcados como completos'}.`
+    : lines.length ? `Todo listo${full ? ` · ${full} ${full === 1 ? 'video completo' : 'videos completos'}` : ''}.` : '';
 }
 
 function renderSummary(){
@@ -1588,8 +1725,9 @@ function renderSummary(){
   $('sumVideos').textContent = String(videos);
   $('sumSegments').textContent = String(segments);
   $('sumDuration').textContent = fmtCompact(duration);
+  const full = totalFullVideos();
   $('headerStat').textContent = state.videos.length
-    ? `${state.videos.length} ${state.videos.length === 1 ? 'video' : 'videos'} · ${segments} ${segments === 1 ? 'fragmento' : 'fragmentos'}`
+    ? `${state.videos.length} ${state.videos.length === 1 ? 'video' : 'videos'} · ${segments} ${segments === 1 ? 'fragmento' : 'fragmentos'}${full ? ` · ${full} completos` : ''}`
     : 'Sesión vacía';
 }
 
@@ -1614,7 +1752,10 @@ $('gotoInput').addEventListener('keydown', event => {
 });
 $('markIn').addEventListener('click', markIn);
 $('markOut').addEventListener('click', markOut);
+$('modeClips').addEventListener('click', () => setVideoMode('clips'));
+$('modeFull').addEventListener('click', () => setVideoMode('full'));
 $('copyAll').addEventListener('click', copyAll);
+$('sendToLocal').addEventListener('click', sendToLocalDownloader);
 $('downloadTxt').addEventListener('click', downloadTxt);
 $('undoBtn').addEventListener('click', undo);
 $('clearBtn').addEventListener('click', clearSession);
